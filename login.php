@@ -1,185 +1,138 @@
 <?php
-// login.php - Debug Version
+// login.php - Professional Login API
 header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, X-DB-Host, X-DB-User, X-DB-Pass, X-DB-Name, X-DB-Port');
 
-// Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-
-// Function to get all headers properly
-function getAllHeadersSimple() {
-    $headers = [];
-    if (function_exists('getallheaders')) {
-        return getallheaders();
-    }
-    foreach ($_SERVER as $name => $value) {
-        if (substr($name, 0, 5) == 'HTTP_') {
-            $headers[str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))))] = $value;
-        } elseif ($name == 'CONTENT_TYPE') {
-            $headers['Content-Type'] = $value;
-        } elseif ($name == 'CONTENT_LENGTH') {
-            $headers['Content-Length'] = $value;
-        }
-    }
-    return $headers;
+// Handle preflight requests
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
 }
 
 try {
     // ==============================================
-    // STEP 1: DEBUG - Log incoming request
-    // ==============================================
-    $debug = [
-        'timestamp' => date('Y-m-d H:i:s'),
-        'method' => $_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN',
-        'headers_received' => getAllHeadersSimple(),
-        'raw_post' => file_get_contents('php://input'),
-        '_post' => $_POST,
-        '_server' => [
-            'HTTP_X_DB_HOST' => $_SERVER['HTTP_X_DB_HOST'] ?? 'NOT SET',
-            'HTTP_X_DB_USER' => $_SERVER['HTTP_X_DB_USER'] ?? 'NOT SET',
-            'HTTP_X_DB_PASS' => $_SERVER['HTTP_X_DB_PASS'] ?? 'NOT SET',
-            'HTTP_X_DB_NAME' => $_SERVER['HTTP_X_DB_NAME'] ?? 'NOT SET',
-            'HTTP_X_DB_PORT' => $_SERVER['HTTP_X_DB_PORT'] ?? 'NOT SET',
-            'CONTENT_TYPE' => $_SERVER['CONTENT_TYPE'] ?? 'NOT SET'
-        ]
-    ];
-    
-    // ==============================================
-    // STEP 2: Check request method
+    // VALIDATE REQUEST METHOD
     // ==============================================
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        throw new Exception('Only POST method is allowed', 405);
+        throw new Exception('Method not allowed', 405);
     }
-    
+
     // ==============================================
-    // STEP 3: Get database config from headers
+    // EXTRACT DATABASE CONFIGURATION FROM HEADERS
     // ==============================================
-    $headers = getAllHeadersSimple();
+    $headers = [];
     
-    $db_host = '';
-    $db_user = '';
-    $db_pass = '';
-    $db_name = '';
-    $db_port = 3306;
-    
-    // Try different header formats
-    $db_host = $headers['X-DB-Host'] ?? 
-               $_SERVER['HTTP_X_DB_HOST'] ?? 
-               ($headers['x-db-host'] ?? 'localhost');
-    
-    $db_user = $headers['X-DB-User'] ?? 
-               $_SERVER['HTTP_X_DB_USER'] ?? 
-               ($headers['x-db-user'] ?? '');
-    
-    $db_pass = $headers['X-DB-Pass'] ?? 
-               $_SERVER['HTTP_X_DB_PASS'] ?? 
-               ($headers['x-db-pass'] ?? '');
-    
-    $db_name = $headers['X-DB-Name'] ?? 
-               $_SERVER['HTTP_X_DB_NAME'] ?? 
-               ($headers['x-db-name'] ?? '');
-    
-    $db_port = $headers['X-DB-Port'] ?? 
-               $_SERVER['HTTP_X_DB_PORT'] ?? 
-               ($headers['x-db-port'] ?? 3306);
-    
-    // Log extracted values
-    $debug['extracted_db_config'] = [
-        'host' => $db_host,
-        'user' => $db_user,
-        'pass' => strlen($db_pass) > 0 ? '***SET***' : 'EMPTY',
-        'name' => $db_name,
-        'port' => $db_port
-    ];
-    
-    // Validate required fields
-    if (empty($db_user) || empty($db_name)) {
-        throw new Exception('Database configuration incomplete. Required: X-DB-User and X-DB-Name', 400);
-    }
-    
-    // ==============================================
-    // STEP 4: Connect to database
-    // ==============================================
-    $mysqli = @new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
-    
-    if ($mysqli->connect_error) {
-        throw new Exception("Database connection failed: " . $mysqli->connect_error, 500);
-    }
-    
-    $mysqli->set_charset("utf8mb4");
-    $debug['db_connection'] = 'SUCCESS';
-    
-    // ==============================================
-    // STEP 5: Get login data
-    // ==============================================
-    $raw_input = file_get_contents('php://input');
-    $post_data = [];
-    
-    if (!empty($raw_input)) {
-        // Try JSON first
-        $json_data = json_decode($raw_input, true);
-        if (json_last_error() === JSON_ERROR_NONE) {
-            $post_data = $json_data;
-        } else {
-            // Try form data
-            parse_str($raw_input, $post_data);
+    // Get all headers (compatible with all servers)
+    foreach ($_SERVER as $key => $value) {
+        if (substr($key, 0, 5) === 'HTTP_') {
+            $header = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($key, 5)))));
+            $headers[$header] = $value;
         }
     }
-    
-    // If still empty, use $_POST
-    if (empty($post_data) && !empty($_POST)) {
-        $post_data = $_POST;
+
+    // Extract database configuration
+    $dbConfig = [
+        'host' => $headers['X-DB-Host'] ?? 'localhost',
+        'username' => $headers['X-DB-User'] ?? '',
+        'password' => $headers['X-DB-Pass'] ?? '',
+        'database' => $headers['X-DB-Name'] ?? '',
+        'port' => isset($headers['X-DB-Port']) ? (int)$headers['X-DB-Port'] : 3306
+    ];
+
+    // Validate required database configuration
+    if (empty($dbConfig['username']) || empty($dbConfig['database'])) {
+        throw new Exception('Database configuration is incomplete. Please provide X-DB-User and X-DB-Name headers.', 400);
     }
+
+    // ==============================================
+    // ESTABLISH DATABASE CONNECTION
+    // ==============================================
+    $mysqli = new mysqli(
+        $dbConfig['host'],
+        $dbConfig['username'],
+        $dbConfig['password'],
+        $dbConfig['database'],
+        $dbConfig['port']
+    );
+
+    if ($mysqli->connect_error) {
+        throw new Exception('Database connection failed. Please check your database configuration.', 500);
+    }
+
+    // Set charset to utf8mb4
+    $mysqli->set_charset("utf8mb4");
+
+    // ==============================================
+    // PARSE AND VALIDATE REQUEST DATA
+    // ==============================================
+    $inputData = json_decode(file_get_contents('php://input'), true);
     
-    $debug['parsed_post_data'] = $post_data;
-    
+    // Fallback to $_POST if JSON parsing fails
+    if (json_last_error() !== JSON_ERROR_NONE || empty($inputData)) {
+        $inputData = $_POST;
+    }
+
     // Validate required fields
-    if (empty($post_data['email']) || empty($post_data['password'])) {
-        throw new Exception('Email and password are required', 400);
+    if (empty($inputData['email']) || empty($inputData['password'])) {
+        throw new Exception('Email and password are required fields.', 400);
     }
-    
-    $email = trim($post_data['email']);
-    $password = $post_data['password'];
-    
+
+    $email = trim($inputData['email']);
+    $password = $inputData['password'];
+
+    // Validate email format
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new Exception('Invalid email format.', 400);
+    }
+
     // ==============================================
-    // STEP 6: Query database for user
+    // AUTHENTICATE USER
     // ==============================================
-    $query = "SELECT id, name, email, password, role, email_verified_at, created_at, updated_at 
-              FROM users WHERE email = ? LIMIT 1";
-    
-    $stmt = $mysqli->prepare($query);
+    $stmt = $mysqli->prepare("
+        SELECT id, name, email, password, role, email_verified_at, created_at, updated_at 
+        FROM users 
+        WHERE email = ? 
+        LIMIT 1
+    ");
+
     if (!$stmt) {
-        throw new Exception("Failed to prepare query: " . $mysqli->error, 500);
+        throw new Exception('Authentication service temporarily unavailable.', 500);
     }
-    
+
     $stmt->bind_param("s", $email);
-    $stmt->execute();
+    
+    if (!$stmt->execute()) {
+        throw new Exception('Authentication failed. Please try again.', 500);
+    }
+
     $result = $stmt->get_result();
     
     if ($result->num_rows === 0) {
-        throw new Exception('Invalid email or password', 401);
+        throw new Exception('Invalid email or password.', 401);
     }
-    
+
     $user = $result->fetch_assoc();
     $stmt->close();
-    
+
     // ==============================================
-    // STEP 7: Verify password
+    // VERIFY PASSWORD (Laravel bcrypt compatible)
     // ==============================================
     if (!password_verify($password, $user['password'])) {
-        throw new Exception('Invalid email or password', 401);
+        throw new Exception('Invalid email or password.', 401);
     }
-    
+
     // ==============================================
-    // STEP 8: Prepare response
+    // PREPARE SUCCESS RESPONSE
     // ==============================================
-    $role_names = [
+    $roleNames = [
         0 => 'Admin',
         1 => 'Manager',
         2 => 'Cashier',
         3 => 'Stock Keeper'
     ];
-    
+
     $response = [
         'success' => true,
         'message' => 'Login successful',
@@ -190,46 +143,53 @@ try {
                 'email' => $user['email'],
                 'role' => [
                     'id' => (int)$user['role'],
-                    'name' => $role_names[$user['role']] ?? 'Unknown'
+                    'name' => $roleNames[$user['role']] ?? 'Unknown'
                 ],
-                'email_verified' => !empty($user['email_verified_at']),
+                'email_verified' => !is_null($user['email_verified_at']),
+                'email_verified_at' => $user['email_verified_at'],
                 'created_at' => $user['created_at'],
                 'updated_at' => $user['updated_at']
             ]
         ],
-        // Include debug info (remove in production)
-        '_debug' => $debug
+        'timestamp' => date('c')
     ];
-    
+
     // ==============================================
-    // STEP 9: Send success response
+    // SEND SUCCESS RESPONSE
     // ==============================================
     http_response_code(200);
-    echo json_encode($response, JSON_PRETTY_PRINT);
+    echo json_encode($response, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     
+    // Clean up
     $mysqli->close();
-    
+
 } catch (Exception $e) {
     // ==============================================
     // ERROR HANDLING
     // ==============================================
-    $status_code = $e->getCode();
-    if ($status_code < 100 || $status_code > 599) {
-        $status_code = 500;
+    $statusCode = $e->getCode();
+    
+    // Ensure valid HTTP status code
+    if ($statusCode < 400 || $statusCode > 599) {
+        $statusCode = 500;
     }
-    
-    $error_response = [
+
+    // Security: Generic message for server errors
+    $errorMessage = $statusCode === 500 
+        ? 'An internal server error occurred. Please try again later.' 
+        : $e->getMessage();
+
+    $errorResponse = [
         'error' => true,
-        'status_code' => $status_code,
-        'message' => $e->getMessage(),
-        'response' => '',
-        // Include debug info for troubleshooting
-        '_debug' => isset($debug) ? $debug : 'No debug info available'
+        'status_code' => $statusCode,
+        'message' => $errorMessage,
+        'timestamp' => date('c')
     ];
+
+    http_response_code($statusCode);
+    echo json_encode($errorResponse, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     
-    http_response_code($status_code);
-    echo json_encode($error_response, JSON_PRETTY_PRINT);
-    
+    // Clean up database connection if exists
     if (isset($mysqli) && $mysqli instanceof mysqli) {
         @$mysqli->close();
     }
