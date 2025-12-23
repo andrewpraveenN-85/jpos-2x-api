@@ -1,180 +1,179 @@
 <?php
-// login.php - Complete Login API in Single File
+// login.php - Debug Version
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-DB-Host, X-DB-User, X-DB-Pass, X-DB-Name, X-DB-Port');
 
-// Handle preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-// Only accept POST requests for login
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode([
-        'success' => false,
-        //'message' => 'Method not allowed. Only POST requests are accepted.'
-        'message' => $_SERVER['REQUEST_METHOD']
-    ]);
-    exit();
+// Function to get all headers properly
+function getAllHeadersSimple() {
+    $headers = [];
+    if (function_exists('getallheaders')) {
+        return getallheaders();
+    }
+    foreach ($_SERVER as $name => $value) {
+        if (substr($name, 0, 5) == 'HTTP_') {
+            $headers[str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))))] = $value;
+        } elseif ($name == 'CONTENT_TYPE') {
+            $headers['Content-Type'] = $value;
+        } elseif ($name == 'CONTENT_LENGTH') {
+            $headers['Content-Length'] = $value;
+        }
+    }
+    return $headers;
 }
 
 try {
-    // =================================================================
-    // 1. GET DATABASE CONFIGURATION FROM HEADERS
-    // =================================================================
-    
-    // Function to get all headers (works with both Apache and Nginx)
-    function getAllHeaders() {
-        $headers = [];
-        foreach ($_SERVER as $name => $value) {
-            if (substr($name, 0, 5) == 'HTTP_') {
-                $headers[str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))))] = $value;
-            }
-        }
-        return $headers;
-    }
-    
-    $headers = getAllHeaders();
-    
-    // Extract database configuration from headers
-    $dbConfig = [
-        'host' => $headers['X-DB-Host'] ?? $_SERVER['HTTP_X_DB_HOST'] ?? 'localhost',
-        'username' => $headers['X-DB-User'] ?? $_SERVER['HTTP_X_DB_USER'] ?? '',
-        'password' => $headers['X-DB-Pass'] ?? $_SERVER['HTTP_X_DB_PASS'] ?? '',
-        'database' => $headers['X-DB-Name'] ?? $_SERVER['HTTP_X_DB_NAME'] ?? '',
-        'port' => $headers['X-DB-Port'] ?? $_SERVER['HTTP_X_DB_PORT'] ?? 3306
+    // ==============================================
+    // STEP 1: DEBUG - Log incoming request
+    // ==============================================
+    $debug = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'method' => $_SERVER['REQUEST_METHOD'] ?? 'UNKNOWN',
+        'headers_received' => getAllHeadersSimple(),
+        'raw_post' => file_get_contents('php://input'),
+        '_post' => $_POST,
+        '_server' => [
+            'HTTP_X_DB_HOST' => $_SERVER['HTTP_X_DB_HOST'] ?? 'NOT SET',
+            'HTTP_X_DB_USER' => $_SERVER['HTTP_X_DB_USER'] ?? 'NOT SET',
+            'HTTP_X_DB_PASS' => $_SERVER['HTTP_X_DB_PASS'] ?? 'NOT SET',
+            'HTTP_X_DB_NAME' => $_SERVER['HTTP_X_DB_NAME'] ?? 'NOT SET',
+            'HTTP_X_DB_PORT' => $_SERVER['HTTP_X_DB_PORT'] ?? 'NOT SET',
+            'CONTENT_TYPE' => $_SERVER['CONTENT_TYPE'] ?? 'NOT SET'
+        ]
     ];
     
-    // Validate required database configuration
-    if (empty($dbConfig['username']) || empty($dbConfig['database'])) {
-        throw new Exception('Database configuration is incomplete. Please provide X-DB-User and X-DB-Name headers.', 400);
+    // ==============================================
+    // STEP 2: Check request method
+    // ==============================================
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        throw new Exception('Only POST method is allowed', 405);
     }
     
-    // =================================================================
-    // 2. CONNECT TO DATABASE
-    // =================================================================
+    // ==============================================
+    // STEP 3: Get database config from headers
+    // ==============================================
+    $headers = getAllHeadersSimple();
     
-    $mysqli = new mysqli(
-        $dbConfig['host'],
-        $dbConfig['username'],
-        $dbConfig['password'],
-        $dbConfig['database'],
-        $dbConfig['port']
-    );
+    $db_host = '';
+    $db_user = '';
+    $db_pass = '';
+    $db_name = '';
+    $db_port = 3306;
+    
+    // Try different header formats
+    $db_host = $headers['X-DB-Host'] ?? 
+               $_SERVER['HTTP_X_DB_HOST'] ?? 
+               ($headers['x-db-host'] ?? 'localhost');
+    
+    $db_user = $headers['X-DB-User'] ?? 
+               $_SERVER['HTTP_X_DB_USER'] ?? 
+               ($headers['x-db-user'] ?? '');
+    
+    $db_pass = $headers['X-DB-Pass'] ?? 
+               $_SERVER['HTTP_X_DB_PASS'] ?? 
+               ($headers['x-db-pass'] ?? '');
+    
+    $db_name = $headers['X-DB-Name'] ?? 
+               $_SERVER['HTTP_X_DB_NAME'] ?? 
+               ($headers['x-db-name'] ?? '');
+    
+    $db_port = $headers['X-DB-Port'] ?? 
+               $_SERVER['HTTP_X_DB_PORT'] ?? 
+               ($headers['x-db-port'] ?? 3306);
+    
+    // Log extracted values
+    $debug['extracted_db_config'] = [
+        'host' => $db_host,
+        'user' => $db_user,
+        'pass' => strlen($db_pass) > 0 ? '***SET***' : 'EMPTY',
+        'name' => $db_name,
+        'port' => $db_port
+    ];
+    
+    // Validate required fields
+    if (empty($db_user) || empty($db_name)) {
+        throw new Exception('Database configuration incomplete. Required: X-DB-User and X-DB-Name', 400);
+    }
+    
+    // ==============================================
+    // STEP 4: Connect to database
+    // ==============================================
+    $mysqli = @new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
     
     if ($mysqli->connect_error) {
         throw new Exception("Database connection failed: " . $mysqli->connect_error, 500);
     }
     
-    // Set charset to utf8mb4 (same as Laravel)
     $mysqli->set_charset("utf8mb4");
+    $debug['db_connection'] = 'SUCCESS';
     
-    // =================================================================
-    // 3. GET LOGIN CREDENTIALS FROM POST DATA
-    // =================================================================
+    // ==============================================
+    // STEP 5: Get login data
+    // ==============================================
+    $raw_input = file_get_contents('php://input');
+    $post_data = [];
     
-    // Get raw POST data
-    $rawInput = file_get_contents('php://input');
-    
-    // Try to decode as JSON first
-    $postData = json_decode($rawInput, true);
-    
-    // If JSON decoding fails, use $_POST (form data)
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        $postData = $_POST;
+    if (!empty($raw_input)) {
+        // Try JSON first
+        $json_data = json_decode($raw_input, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $post_data = $json_data;
+        } else {
+            // Try form data
+            parse_str($raw_input, $post_data);
+        }
     }
+    
+    // If still empty, use $_POST
+    if (empty($post_data) && !empty($_POST)) {
+        $post_data = $_POST;
+    }
+    
+    $debug['parsed_post_data'] = $post_data;
     
     // Validate required fields
-    if (empty($postData['email']) || empty($postData['password'])) {
-        throw new Exception('Email and password are required fields.', 400);
+    if (empty($post_data['email']) || empty($post_data['password'])) {
+        throw new Exception('Email and password are required', 400);
     }
     
-    $email = trim($postData['email']);
-    $password = $postData['password'];
+    $email = trim($post_data['email']);
+    $password = $post_data['password'];
     
-    // Additional validation
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        throw new Exception('Invalid email format.', 400);
-    }
+    // ==============================================
+    // STEP 6: Query database for user
+    // ==============================================
+    $query = "SELECT id, name, email, password, role, email_verified_at, created_at, updated_at 
+              FROM users WHERE email = ? LIMIT 1";
     
-    if (strlen($password) < 1) {
-        throw new Exception('Password cannot be empty.', 400);
-    }
-    
-    // =================================================================
-    // 4. VERIFY PASSWORD (LARAVEL BCRYPT COMPATIBLE)
-    // =================================================================
-    
-    // Laravel-compatible password verification function
-    function verifyPassword($plainPassword, $hashedPassword) {
-        if (empty($hashedPassword)) {
-            return false;
-        }
-        
-        // Laravel uses PHP's password_verify() for bcrypt
-        return password_verify($plainPassword, $hashedPassword);
-    }
-    
-    // =================================================================
-    // 5. CHECK USER IN DATABASE
-    // =================================================================
-    
-    // Prepare SQL query to prevent SQL injection
-    $stmt = $mysqli->prepare("
-        SELECT 
-            id, 
-            name, 
-            email, 
-            password, 
-            role, 
-            email_verified_at,
-            created_at, 
-            updated_at
-        FROM users 
-        WHERE email = ? 
-        LIMIT 1
-    ");
-    
+    $stmt = $mysqli->prepare($query);
     if (!$stmt) {
-        throw new Exception("Failed to prepare SQL statement: " . $mysqli->error, 500);
+        throw new Exception("Failed to prepare query: " . $mysqli->error, 500);
     }
     
     $stmt->bind_param("s", $email);
     $stmt->execute();
     $result = $stmt->get_result();
     
-    // Check if user exists
     if ($result->num_rows === 0) {
-        throw new Exception('Invalid email or password.', 401);
+        throw new Exception('Invalid email or password', 401);
     }
     
     $user = $result->fetch_assoc();
     $stmt->close();
     
-    // =================================================================
-    // 6. VERIFY PASSWORD
-    // =================================================================
-    
-    if (!verifyPassword($password, $user['password'])) {
-        throw new Exception('Invalid email or password.', 401);
+    // ==============================================
+    // STEP 7: Verify password
+    // ==============================================
+    if (!password_verify($password, $user['password'])) {
+        throw new Exception('Invalid email or password', 401);
     }
     
-    // Optional: Check if email is verified
-    if (is_null($user['email_verified_at'])) {
-        // Uncomment if you want to require email verification
-        // throw new Exception('Please verify your email address before logging in.', 403);
-    }
-    
-    // =================================================================
-    // 7. PREPARE SUCCESS RESPONSE
-    // =================================================================
-    
-    // Define role names based on your database
-    $roleNames = [
+    // ==============================================
+    // STEP 8: Prepare response
+    // ==============================================
+    $role_names = [
         0 => 'Admin',
         1 => 'Manager',
         2 => 'Cashier',
@@ -191,69 +190,47 @@ try {
                 'email' => $user['email'],
                 'role' => [
                     'id' => (int)$user['role'],
-                    'name' => $roleNames[$user['role']] ?? 'Unknown'
+                    'name' => $role_names[$user['role']] ?? 'Unknown'
                 ],
-                'email_verified' => !is_null($user['email_verified_at']),
-                'email_verified_at' => $user['email_verified_at'],
+                'email_verified' => !empty($user['email_verified_at']),
                 'created_at' => $user['created_at'],
                 'updated_at' => $user['updated_at']
-            ],
-            'session' => [
-                'token' => bin2hex(random_bytes(32)), // Generate a simple session token
-                'expires_in' => 3600, // 1 hour in seconds
-                'timestamp' => date('Y-m-d H:i:s')
             ]
-        ]
+        ],
+        // Include debug info (remove in production)
+        '_debug' => $debug
     ];
     
-    // Optional: Update last login timestamp (if you have this column)
-    // $updateStmt = $mysqli->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
-    // $updateStmt->bind_param("i", $user['id']);
-    // $updateStmt->execute();
-    // $updateStmt->close();
-    
-    // =================================================================
-    // 8. SEND SUCCESS RESPONSE
-    // =================================================================
-    
+    // ==============================================
+    // STEP 9: Send success response
+    // ==============================================
     http_response_code(200);
-    echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    
-    // =================================================================
-    // 9. CLEAN UP
-    // =================================================================
+    echo json_encode($response, JSON_PRETTY_PRINT);
     
     $mysqli->close();
     
 } catch (Exception $e) {
-    // =================================================================
+    // ==============================================
     // ERROR HANDLING
-    // =================================================================
-    
-    // Determine HTTP status code
-    $statusCode = $e->getCode();
-    if ($statusCode < 400 || $statusCode > 599) {
-        $statusCode = 500;
+    // ==============================================
+    $status_code = $e->getCode();
+    if ($status_code < 100 || $status_code > 599) {
+        $status_code = 500;
     }
     
-    // For security, don't expose detailed error messages for 500 errors in production
-    $errorMessage = $e->getMessage();
-    if ($statusCode === 500) {
-        // In production, you might want to log the actual error and show a generic message
-        error_log("Login API Error: " . $errorMessage);
-        $errorMessage = 'An internal server error occurred. Please try again later.';
-    }
+    $error_response = [
+        'error' => true,
+        'status_code' => $status_code,
+        'message' => $e->getMessage(),
+        'response' => '',
+        // Include debug info for troubleshooting
+        '_debug' => isset($debug) ? $debug : 'No debug info available'
+    ];
     
-    http_response_code($statusCode);
-    echo json_encode([
-        'success' => false,
-        'message' => $errorMessage,
-        'code' => $statusCode,
-        'timestamp' => date('Y-m-d H:i:s')
-    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    http_response_code($status_code);
+    echo json_encode($error_response, JSON_PRETTY_PRINT);
     
-    // Close database connection if it exists
     if (isset($mysqli) && $mysqli instanceof mysqli) {
-        $mysqli->close();
+        @$mysqli->close();
     }
 }
