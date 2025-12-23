@@ -16,13 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode([
         'success' => false,
-        'message' => 'Method not allowed. Only POST requests are accepted.'
-    ]);
-    exit();
-}else{
-    http_response_code(200);
-    echo json_encode([
-        'success' => false,
+        //'message' => 'Method not allowed. Only POST requests are accepted.'
         'message' => $_SERVER['REQUEST_METHOD']
     ]);
     exit();
