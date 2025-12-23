@@ -222,13 +222,13 @@ try {
     // STEP 10: Optional - Log password change
     // ==============================================
     // You could log this action in an audit_log table
-    $log_query = "INSERT INTO password_history (user_id, changed_at) VALUES (?, NOW())";
-    $log_stmt = $mysqli->prepare($log_query);
-    if ($log_stmt) {
-        $log_stmt->bind_param("i", $user_id);
-        $log_stmt->execute();
-        $log_stmt->close();
-    }
+    // $log_query = "INSERT INTO password_history (user_id, changed_at) VALUES (?, NOW())";
+    // $log_stmt = $mysqli->prepare($log_query);
+    // if ($log_stmt) {
+    //     $log_stmt->bind_param("i", $user_id);
+    //     $log_stmt->execute();
+    //     $log_stmt->close();
+    // }
     
     // ==============================================
     // STEP 11: Prepare success response
