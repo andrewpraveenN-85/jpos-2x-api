@@ -140,27 +140,27 @@ try {
     }
     
     // Validate password strength (customize as needed)
-    $password_min_length = 8;
-    if (strlen($new_password) < $password_min_length) {
-        throw new Exception('New password must be at least ' . $password_min_length . ' characters long', 400);
-    }
+    // $password_min_length = 9;
+    // if (strlen($new_password) < $password_min_length) {
+    //     throw new Exception('New password must be at least ' . $password_min_length . ' characters long', 400);
+    // }
     
-    // Optional: Add more password complexity rules
-    if (!preg_match('/[A-Z]/', $new_password)) {
-        throw new Exception('New password must contain at least one uppercase letter', 400);
-    }
+    // // Optional: Add more password complexity rules
+    // if (!preg_match('/[A-Z]/', $new_password)) {
+    //     throw new Exception('New password must contain at least one uppercase letter', 400);
+    // }
     
-    if (!preg_match('/[a-z]/', $new_password)) {
-        throw new Exception('New password must contain at least one lowercase letter', 400);
-    }
+    // if (!preg_match('/[a-z]/', $new_password)) {
+    //     throw new Exception('New password must contain at least one lowercase letter', 400);
+    // }
     
-    if (!preg_match('/[0-9]/', $new_password)) {
-        throw new Exception('New password must contain at least one number', 400);
-    }
+    // if (!preg_match('/[0-9]/', $new_password)) {
+    //     throw new Exception('New password must contain at least one number', 400);
+    // }
     
-    if (!preg_match('/[!@#$%^&*(),.?":{}|<>]/', $new_password)) {
-        throw new Exception('New password must contain at least one special character', 400);
-    }
+    // if (!preg_match('/[!@#$%^&*(),.?":{}|<>]/', $new_password)) {
+    //     throw new Exception('New password must contain at least one special character', 400);
+    // }
     
     // ==============================================
     // STEP 7: Fetch user and verify current password
