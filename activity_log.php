@@ -24,6 +24,59 @@ function getAllHeadersSimple() {
     return $headers;
 }
 
+// Helper function to get available modules
+function getAvailableModules($mysqli) {
+    $query = "SELECT DISTINCT module FROM activity_logs WHERE module IS NOT NULL ORDER BY module";
+    $result = $mysqli->query($query);
+    $modules = [];
+    
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $modules[] = $row['module'];
+        }
+        $result->free();
+    }
+    
+    return $modules;
+}
+
+// Helper function to get available actions
+function getAvailableActions($mysqli) {
+    $query = "SELECT DISTINCT action FROM activity_logs ORDER BY action";
+    $result = $mysqli->query($query);
+    $actions = [];
+    
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $actions[] = $row['action'];
+        }
+        $result->free();
+    }
+    
+    return $actions;
+}
+
+// Helper function to get all users
+function getAllUsers($mysqli) {
+    $query = "SELECT id, name, email, role FROM users ORDER BY name";
+    $result = $mysqli->query($query);
+    $users = [];
+    
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $users[] = [
+                'id' => (int)$row['id'],
+                'name' => $row['name'],
+                'email' => $row['email'],
+                'role' => (int)$row['role']
+            ];
+        }
+        $result->free();
+    }
+    
+    return $users;
+}
+
 try { 
     // ==============================================
     // STEP 1: Check request method
@@ -64,9 +117,22 @@ try {
                $_SERVER['HTTP_X_DB_PORT'] ?? 
                ($headers['x-db-port'] ?? 3306);
     
+    // Debug: Log extracted headers
+    $debug_info = [
+        'extracted_headers' => [
+            'host' => $db_host,
+            'user' => $db_user,
+            'pass' => !empty($db_pass) ? '***SET***' : 'EMPTY',
+            'name' => $db_name,
+            'port' => $db_port
+        ]
+    ];
+    
     // Validate required fields
     if (empty($db_user) || empty($db_name)) {
-        throw new Exception('Database configuration incomplete. Required: X-DB-User and X-DB-Name', 400);
+        $error_msg = 'Database configuration incomplete. Required: X-DB-User and X-DB-Name. ';
+        $error_msg .= 'Received: user=' . ($db_user ?: 'empty') . ', name=' . ($db_name ?: 'empty');
+        throw new Exception($error_msg, 400);
     }
     
     // ==============================================
@@ -79,19 +145,20 @@ try {
     }
     
     $mysqli->set_charset("utf8mb4");
+    $debug_info['db_connection'] = 'SUCCESS';
     
     // ==============================================
     // STEP 4: Get filter parameters from query string
     // ==============================================
     $filters = [
-        'user_id' => $_GET['user_id'] ?? null,
-        'start_date' => $_GET['start_date'] ?? null,
-        'end_date' => $_GET['end_date'] ?? null,
-        'module' => $_GET['module'] ?? null,
-        'action' => $_GET['action'] ?? null,
+        'user_id' => isset($_GET['user_id']) && $_GET['user_id'] !== '' ? $_GET['user_id'] : null,
+        'start_date' => isset($_GET['start_date']) && $_GET['start_date'] !== '' ? $_GET['start_date'] : null,
+        'end_date' => isset($_GET['end_date']) && $_GET['end_date'] !== '' ? $_GET['end_date'] : null,
+        'module' => isset($_GET['module']) && $_GET['module'] !== '' ? $_GET['module'] : null,
+        'action' => isset($_GET['action']) && $_GET['action'] !== '' ? $_GET['action'] : null,
         'page' => isset($_GET['page']) ? (int)$_GET['page'] : 1,
-        'per_page' => isset($_GET['per_page']) ? (int)$_GET['page'] : 50,
-        'search' => $_GET['search'] ?? null
+        'per_page' => isset($_GET['per_page']) ? (int)$_GET['per_page'] : 50,
+        'search' => isset($_GET['search']) && $_GET['search'] !== '' ? $_GET['search'] : null
     ];
     
     // Validate and sanitize parameters
@@ -186,83 +253,91 @@ try {
     
     $count_stmt->execute();
     $count_result = $count_stmt->get_result();
-    $total_count = $count_result->fetch_assoc()['total'];
+    $total_row = $count_result->fetch_assoc();
+    $total_count = $total_row ? $total_row['total'] : 0;
     $count_stmt->close();
     
     // ==============================================
     // STEP 7: Calculate pagination
     // ==============================================
     $offset = ($filters['page'] - 1) * $filters['per_page'];
-    $total_pages = ceil($total_count / $filters['per_page']);
+    $total_pages = $filters['per_page'] > 0 ? ceil($total_count / $filters['per_page']) : 0;
     
     // ==============================================
     // STEP 8: Fetch activity logs with pagination
     // ==============================================
-    $logs_query = "SELECT 
-                    al.id,
-                    al.user_id,
-                    u.name as user_name,
-                    u.email as user_email,
-                    al.action,
-                    al.module,
-                    al.details,
-                    al.created_at,
-                    al.updated_at
-                   FROM activity_logs al
-                   LEFT JOIN users u ON al.user_id = u.id 
-                   $where_clause
-                   ORDER BY al.created_at DESC
-                   LIMIT ? OFFSET ?";
-    
-    $logs_stmt = $mysqli->prepare($logs_query);
-    if (!$logs_stmt) {
-        throw new Exception("Failed to prepare logs query: " . $mysqli->error, 500);
-    }
-    
-    // Add pagination parameters
-    $all_params = $params;
-    $all_param_types = $param_types . "ii";
-    $all_params[] = $filters['per_page'];
-    $all_params[] = $offset;
-    
-    // Bind parameters if any
-    if (!empty($all_params)) {
-        $logs_stmt->bind_param($all_param_types, ...$all_params);
-    }
-    
-    $logs_stmt->execute();
-    $logs_result = $logs_stmt->get_result();
     $activity_logs = [];
     
-    // Parse JSON details field
-    while ($row = $logs_result->fetch_assoc()) {
-        $details = [];
-        if (!empty($row['details'])) {
-            $decoded_details = json_decode($row['details'], true);
-            if (json_last_error() === JSON_ERROR_NONE) {
-                $details = $decoded_details;
-            } else {
-                $details = ['raw' => $row['details']];
-            }
+    // Only fetch logs if per_page > 0
+    if ($filters['per_page'] > 0) {
+        $logs_query = "SELECT 
+                        al.id,
+                        al.user_id,
+                        u.name as user_name,
+                        u.email as user_email,
+                        al.action,
+                        al.module,
+                        al.details,
+                        al.created_at,
+                        al.updated_at
+                       FROM activity_logs al
+                       LEFT JOIN users u ON al.user_id = u.id 
+                       $where_clause
+                       ORDER BY al.created_at DESC
+                       LIMIT ? OFFSET ?";
+        
+        $logs_stmt = $mysqli->prepare($logs_query);
+        if (!$logs_stmt) {
+            throw new Exception("Failed to prepare logs query: " . $mysqli->error, 500);
         }
         
-        $activity_logs[] = [
-            'id' => (int)$row['id'],
-            'user' => $row['user_id'] ? [
-                'id' => (int)$row['user_id'],
-                'name' => $row['user_name'],
-                'email' => $row['user_email']
-            ] : null,
-            'action' => $row['action'],
-            'module' => $row['module'],
-            'details' => $details,
-            'created_at' => $row['created_at'],
-            'updated_at' => $row['updated_at'],
-            'formatted_date' => date('Y-m-d H:i:s', strtotime($row['created_at']))
-        ];
+        // Add pagination parameters
+        $all_params = $params;
+        $all_param_types = $param_types . "ii";
+        $all_params[] = $filters['per_page'];
+        $all_params[] = $offset;
+        
+        // Bind parameters if any
+        if (!empty($all_params)) {
+            $logs_stmt->bind_param($all_param_types, ...$all_params);
+        } else {
+            // If no filters, bind just pagination params
+            $logs_stmt->bind_param("ii", $filters['per_page'], $offset);
+        }
+        
+        $logs_stmt->execute();
+        $logs_result = $logs_stmt->get_result();
+        
+        // Parse JSON details field
+        while ($row = $logs_result->fetch_assoc()) {
+            $details = [];
+            if (!empty($row['details'])) {
+                $decoded_details = @json_decode($row['details'], true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $details = $decoded_details;
+                } else {
+                    $details = ['raw' => $row['details']];
+                }
+            }
+            
+            $activity_logs[] = [
+                'id' => (int)$row['id'],
+                'user' => $row['user_id'] ? [
+                    'id' => (int)$row['user_id'],
+                    'name' => $row['user_name'],
+                    'email' => $row['user_email']
+                ] : null,
+                'action' => $row['action'],
+                'module' => $row['module'],
+                'details' => $details,
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'formatted_date' => date('Y-m-d H:i:s', strtotime($row['created_at']))
+            ];
+        }
+        
+        $logs_stmt->close();
     }
-    
-    $logs_stmt->close();
     
     // ==============================================
     // STEP 9: Get summary statistics
@@ -291,78 +366,93 @@ try {
     $statistics = $stats_result->fetch_assoc();
     $stats_stmt->close();
     
+    // Handle null values
+    $statistics = $statistics ?: [
+        'unique_users' => 0,
+        'unique_modules' => 0,
+        'unique_actions' => 0,
+        'first_log_date' => null,
+        'last_log_date' => null
+    ];
+    
     // ==============================================
     // STEP 10: Get top modules and actions
     // ==============================================
-    $top_modules_query = "SELECT 
-                         module,
-                         COUNT(*) as count
-                         FROM activity_logs al
-                         $where_clause
-                         GROUP BY module
-                         ORDER BY count DESC
-                         LIMIT 5";
-    
-    $top_modules_stmt = $mysqli->prepare($top_modules_query);
-    if (!$top_modules_stmt) {
-        throw new Exception("Failed to prepare top modules query: " . $mysqli->error, 500);
-    }
-    
-    if (!empty($params)) {
-        $top_modules_stmt->bind_param($param_types, ...$params);
-    }
-    
-    $top_modules_stmt->execute();
-    $top_modules_result = $top_modules_stmt->get_result();
     $top_modules = [];
-    
-    while ($row = $top_modules_result->fetch_assoc()) {
-        $top_modules[] = [
-            'module' => $row['module'],
-            'count' => (int)$row['count']
-        ];
-    }
-    $top_modules_stmt->close();
-    
-    // ==============================================
-    // STEP 11: Get top users
-    // ==============================================
-    $top_users_query = "SELECT 
-                       u.id,
-                       u.name,
-                       u.email,
-                       COUNT(*) as activity_count
-                       FROM activity_logs al
-                       LEFT JOIN users u ON al.user_id = u.id
-                       $where_clause
-                       GROUP BY al.user_id, u.name, u.email
-                       ORDER BY activity_count DESC
-                       LIMIT 10";
-    
-    $top_users_stmt = $mysqli->prepare($top_users_query);
-    if (!$top_users_stmt) {
-        throw new Exception("Failed to prepare top users query: " . $mysqli->error, 500);
-    }
-    
-    if (!empty($params)) {
-        $top_users_stmt->bind_param($param_types, ...$params);
-    }
-    
-    $top_users_stmt->execute();
-    $top_users_result = $top_users_stmt->get_result();
     $top_users = [];
     
-    while ($row = $top_users_result->fetch_assoc()) {
-        $top_users[] = [
-            'user' => [
-                'id' => (int)$row['id'],
-                'name' => $row['name'],
-                'email' => $row['email']
-            ],
-            'activity_count' => (int)$row['activity_count']
-        ];
+    // Only get top data if we have logs
+    if ($total_count > 0) {
+        // Top modules
+        $top_modules_query = "SELECT 
+                             module,
+                             COUNT(*) as count
+                             FROM activity_logs al
+                             $where_clause
+                             GROUP BY module
+                             ORDER BY count DESC
+                             LIMIT 5";
+        
+        $top_modules_stmt = $mysqli->prepare($top_modules_query);
+        if ($top_modules_stmt) {
+            if (!empty($params)) {
+                $top_modules_stmt->bind_param($param_types, ...$params);
+            }
+            
+            $top_modules_stmt->execute();
+            $top_modules_result = $top_modules_stmt->get_result();
+            
+            while ($row = $top_modules_result->fetch_assoc()) {
+                $top_modules[] = [
+                    'module' => $row['module'],
+                    'count' => (int)$row['count']
+                ];
+            }
+            $top_modules_stmt->close();
+        }
+        
+        // Top users
+        $top_users_query = "SELECT 
+                           u.id,
+                           u.name,
+                           u.email,
+                           COUNT(*) as activity_count
+                           FROM activity_logs al
+                           LEFT JOIN users u ON al.user_id = u.id
+                           $where_clause
+                           GROUP BY al.user_id, u.name, u.email
+                           ORDER BY activity_count DESC
+                           LIMIT 10";
+        
+        $top_users_stmt = $mysqli->prepare($top_users_query);
+        if ($top_users_stmt) {
+            if (!empty($params)) {
+                $top_users_stmt->bind_param($param_types, ...$params);
+            }
+            
+            $top_users_stmt->execute();
+            $top_users_result = $top_users_stmt->get_result();
+            
+            while ($row = $top_users_result->fetch_assoc()) {
+                $top_users[] = [
+                    'user' => [
+                        'id' => (int)$row['id'],
+                        'name' => $row['name'],
+                        'email' => $row['email']
+                    ],
+                    'activity_count' => (int)$row['activity_count']
+                ];
+            }
+            $top_users_stmt->close();
+        }
     }
-    $top_users_stmt->close();
+    
+    // ==============================================
+    // STEP 11: Get meta information
+    // ==============================================
+    $available_modules = getAvailableModules($mysqli);
+    $available_actions = getAvailableActions($mysqli);
+    $all_users = getAllUsers($mysqli);
     
     // ==============================================
     // STEP 12: Prepare final response
@@ -395,9 +485,9 @@ try {
             'activity_logs' => $activity_logs
         ],
         'meta' => [
-            'available_modules' => $this->getAvailableModules($mysqli),
-            'available_actions' => $this->getAvailableActions($mysqli),
-            'all_users' => $this->getAllUsers($mysqli)
+            'available_modules' => $available_modules,
+            'available_actions' => $available_actions,
+            'all_users' => $all_users
         ]
     ];
     
@@ -431,49 +521,4 @@ try {
     if (isset($mysqli) && $mysqli instanceof mysqli) {
         @$mysqli->close();
     }
-}
-
-// ==============================================
-// HELPER FUNCTIONS
-// ==============================================
-
-function getAvailableModules($mysqli) {
-    $query = "SELECT DISTINCT module FROM activity_logs WHERE module IS NOT NULL ORDER BY module";
-    $result = $mysqli->query($query);
-    $modules = [];
-    
-    while ($row = $result->fetch_assoc()) {
-        $modules[] = $row['module'];
-    }
-    
-    return $modules;
-}
-
-function getAvailableActions($mysqli) {
-    $query = "SELECT DISTINCT action FROM activity_logs ORDER BY action";
-    $result = $mysqli->query($query);
-    $actions = [];
-    
-    while ($row = $result->fetch_assoc()) {
-        $actions[] = $row['action'];
-    }
-    
-    return $actions;
-}
-
-function getAllUsers($mysqli) {
-    $query = "SELECT id, name, email, role FROM users ORDER BY name";
-    $result = $mysqli->query($query);
-    $users = [];
-    
-    while ($row = $result->fetch_assoc()) {
-        $users[] = [
-            'id' => (int)$row['id'],
-            'name' => $row['name'],
-            'email' => $row['email'],
-            'role' => (int)$row['role']
-        ];
-    }
-    
-    return $users;
 }
