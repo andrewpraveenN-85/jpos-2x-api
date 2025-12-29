@@ -49,6 +49,8 @@ try {
     $id = isset($_GET['id']) && $_GET['id'] !== '' ? (int)$_GET['id'] : null;
     $brand_id = isset($_GET['brand_id']) && $_GET['brand_id'] !== '' ? (int)$_GET['brand_id'] : null;
     $category_id = isset($_GET['category_id']) && $_GET['category_id'] !== '' ? (int)$_GET['category_id'] : null;
+    $purchase_unit_id = isset($_GET['purchase_unit_id']) && $_GET['purchase_unit_id'] !== '' ? (int)$_GET['purchase_unit_id'] : null;
+    $sales_unit_id = isset($_GET['sales_unit_id']) && $_GET['sales_unit_id'] !== '' ? (int)$_GET['sales_unit_id'] : null;
     $status = isset($_GET['status']) && $_GET['status'] !== '' ? $_GET['status'] : null; // allow 0,1,2
     $page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
     $per_page = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 50;
@@ -69,6 +71,14 @@ try {
     if ($category_id !== null) {
         $where[] = 'p.category_id = ?';
         $params[] = $category_id; $types .= 'i';
+    }
+    if ($purchase_unit_id !== null) {
+        $where[] = 'p.purchase_unit_id = ?';
+        $params[] = $purchase_unit_id; $types .= 'i';
+    }
+    if ($sales_unit_id !== null) {
+        $where[] = 'p.sales_unit_id = ?';
+        $params[] = $sales_unit_id; $types .= 'i';
     }
     if ($status !== null && $status !== '') {
         if (!in_array($status, ['0','1','2','0',0,1,2], true)) {
@@ -101,16 +111,23 @@ try {
 
     $offset = ($page - 1) * $per_page;
 
-    // Select desired fields
+    // Select desired fields with unit joins
     $fields = [
         'p.id','p.name','p.barcode','p.brand_id','p.category_id','p.type_id','p.discount_id','p.tax_id',
         'p.shop_quantity','p.shop_low_stock_margin','p.store_quantity','p.store_low_stock_margin',
         'p.purchase_price','p.wholesale_price','p.retail_price','p.return_product',
         'p.purchase_unit_id','p.sales_unit_id','p.transfer_unit_id','p.purchase_to_transfer_rate','p.transfer_to_sales_rate',
-        'p.status','p.image','p.created_at','p.updated_at','p.deleted_at'
+        'p.status','p.image','p.created_at','p.updated_at','p.deleted_at',
+        'pu.name AS purchase_unit_name','pu.symbol AS purchase_unit_symbol',
+        'su.name AS sales_unit_name','su.symbol AS sales_unit_symbol',
+        'tu.name AS transfer_unit_name','tu.symbol AS transfer_unit_symbol'
     ];
 
-    $select_sql = 'SELECT ' . implode(', ', $fields) . ' FROM products p ' . $where_clause . ' ORDER BY p.id ASC LIMIT ? OFFSET ?';
+    $select_sql = 'SELECT ' . implode(', ', $fields) . ' FROM products p 
+        LEFT JOIN measurement_units pu ON p.purchase_unit_id = pu.id 
+        LEFT JOIN measurement_units su ON p.sales_unit_id = su.id 
+        LEFT JOIN measurement_units tu ON p.transfer_unit_id = tu.id 
+        ' . $where_clause . ' ORDER BY p.id ASC LIMIT ? OFFSET ?';
     $stmt = $mysqli->prepare($select_sql);
     if (!$stmt) throw new Exception('Failed to prepare select query: ' . $mysqli->error, 500);
 
@@ -146,8 +163,23 @@ try {
             'retail_price' => isset($row['retail_price']) ? (float)$row['retail_price'] : null,
             'return_product' => isset($row['return_product']) ? (int)$row['return_product'] : null,
             'purchase_unit_id' => isset($row['purchase_unit_id']) ? (int)$row['purchase_unit_id'] : null,
+            'purchase_unit' => [
+                'id' => isset($row['purchase_unit_id']) ? (int)$row['purchase_unit_id'] : null,
+                'name' => $row['purchase_unit_name'] ?? null,
+                'symbol' => $row['purchase_unit_symbol'] ?? null
+            ],
             'sales_unit_id' => isset($row['sales_unit_id']) ? (int)$row['sales_unit_id'] : null,
+            'sales_unit' => [
+                'id' => isset($row['sales_unit_id']) ? (int)$row['sales_unit_id'] : null,
+                'name' => $row['sales_unit_name'] ?? null,
+                'symbol' => $row['sales_unit_symbol'] ?? null
+            ],
             'transfer_unit_id' => isset($row['transfer_unit_id']) ? (int)$row['transfer_unit_id'] : null,
+            'transfer_unit' => [
+                'id' => isset($row['transfer_unit_id']) ? (int)$row['transfer_unit_id'] : null,
+                'name' => $row['transfer_unit_name'] ?? null,
+                'symbol' => $row['transfer_unit_symbol'] ?? null
+            ],
             'purchase_to_transfer_rate' => isset($row['purchase_to_transfer_rate']) ? (float)$row['purchase_to_transfer_rate'] : null,
             'transfer_to_sales_rate' => isset($row['transfer_to_sales_rate']) ? (float)$row['transfer_to_sales_rate'] : null,
             'status' => isset($row['status']) ? (int)$row['status'] : null,
@@ -165,7 +197,15 @@ try {
         'success' => true,
         'message' => 'Products retrieved',
         'data' => [
-            'filters' => [ 'q' => $q, 'id' => $id, 'brand_id' => $brand_id, 'category_id' => $category_id, 'status' => $status ],
+            'filters' => [ 
+                'q' => $q, 
+                'id' => $id, 
+                'brand_id' => $brand_id, 
+                'category_id' => $category_id, 
+                'purchase_unit_id' => $purchase_unit_id,
+                'sales_unit_id' => $sales_unit_id,
+                'status' => $status 
+            ],
             'pagination' => [
                 'current_page' => $page,
                 'per_page' => $per_page,
