@@ -82,10 +82,19 @@ try {
 
     $fields = [
         'pm.id','pm.product_id','pm.movement_type','pm.quantity','pm.reference','pm.created_at','pm.updated_at',
-        'p.name as product_name','p.barcode as product_barcode','p.retail_price as product_retail_price','p.wholesale_price as product_wholesale_price'
+        'p.name as product_name','p.barcode as product_barcode','p.retail_price as product_retail_price','p.wholesale_price as product_wholesale_price',
+        'p.purchase_unit_id','p.sales_unit_id','p.transfer_unit_id',
+        'pu.name AS purchase_unit_name','pu.symbol AS purchase_unit_symbol',
+        'su.name AS sales_unit_name','su.symbol AS sales_unit_symbol',
+        'tu.name AS transfer_unit_name','tu.symbol AS transfer_unit_symbol'
     ];
 
-    $select_sql = 'SELECT ' . implode(', ', $fields) . " FROM product_movements pm LEFT JOIN products p ON pm.product_id = p.id $where_clause ORDER BY pm.id DESC LIMIT ? OFFSET ?";
+    $select_sql = 'SELECT ' . implode(', ', $fields) . " FROM product_movements pm 
+        LEFT JOIN products p ON pm.product_id = p.id 
+        LEFT JOIN measurement_units pu ON p.purchase_unit_id = pu.id 
+        LEFT JOIN measurement_units su ON p.sales_unit_id = su.id 
+        LEFT JOIN measurement_units tu ON p.transfer_unit_id = tu.id 
+        $where_clause ORDER BY pm.id DESC LIMIT ? OFFSET ?";
     $stmt = $mysqli->prepare($select_sql);
     if (!$stmt) throw new Exception('Failed to prepare select query: ' . $mysqli->error, 500);
 
@@ -112,12 +121,41 @@ try {
     while ($row = $res->fetch_assoc()) {
         $product = null;
         if ($row['product_id'] !== null) {
+            // Determine unit symbol based on movement type
+            $movement_type_value = (int)$row['movement_type'];
+            if ($movement_type_value === 0) {
+                $unit_symbol = $row['purchase_unit_symbol'] ?? null;
+            } elseif ($movement_type_value === 2) {
+                $unit_symbol = $row['transfer_unit_symbol'] ?? null;
+            } else {
+                $unit_symbol = $row['sales_unit_symbol'] ?? null;
+            }
+            
             $product = [
                 'id' => (int)$row['product_id'],
                 'name' => $row['product_name'],
                 'barcode' => $row['product_barcode'],
                 'retail_price' => $row['product_retail_price'] !== null ? (float)$row['product_retail_price'] : null,
-                'wholesale_price' => $row['product_wholesale_price'] !== null ? (float)$row['product_wholesale_price'] : null
+                'wholesale_price' => $row['product_wholesale_price'] !== null ? (float)$row['product_wholesale_price'] : null,
+                'purchase_unit_id' => isset($row['purchase_unit_id']) ? (int)$row['purchase_unit_id'] : null,
+                'purchase_unit' => [
+                    'id' => isset($row['purchase_unit_id']) ? (int)$row['purchase_unit_id'] : null,
+                    'name' => $row['purchase_unit_name'] ?? null,
+                    'symbol' => $row['purchase_unit_symbol'] ?? null
+                ],
+                'sales_unit_id' => isset($row['sales_unit_id']) ? (int)$row['sales_unit_id'] : null,
+                'sales_unit' => [
+                    'id' => isset($row['sales_unit_id']) ? (int)$row['sales_unit_id'] : null,
+                    'name' => $row['sales_unit_name'] ?? null,
+                    'symbol' => $row['sales_unit_symbol'] ?? null
+                ],
+                'transfer_unit_id' => isset($row['transfer_unit_id']) ? (int)$row['transfer_unit_id'] : null,
+                'transfer_unit' => [
+                    'id' => isset($row['transfer_unit_id']) ? (int)$row['transfer_unit_id'] : null,
+                    'name' => $row['transfer_unit_name'] ?? null,
+                    'symbol' => $row['transfer_unit_symbol'] ?? null
+                ],
+                'unit_symbol' => $unit_symbol
             ];
         }
 
