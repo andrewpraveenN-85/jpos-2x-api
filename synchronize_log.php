@@ -24,6 +24,42 @@ function getAllHeadersSimple() {
     return $headers;
 }
 
+// Helper function to format duration seconds to human readable format
+function formatDuration($seconds) {
+    if ($seconds < 1) {
+        return 'Less than 1 second';
+    }
+    
+    $units = [
+        'hour' => 3600,
+        'minute' => 60,
+        'second' => 1
+    ];
+    
+    $parts = [];
+    foreach ($units as $name => $value) {
+        if ($seconds >= $value) {
+            $count = floor($seconds / $value);
+            $seconds %= $value;
+            $parts[] = $count . ' ' . $name . ($count > 1 ? 's' : '');
+        }
+    }
+    
+    return implode(', ', $parts) ?: 'Less than 1 second';
+}
+
+// Helper function to get role label from role ID
+function getRoleLabel($role_id) {
+    $roles = [
+        0 => 'Admin',
+        1 => 'Manager',
+        2 => 'Cashier',
+        3 => 'Stock-Keeper'
+    ];
+    
+    return isset($roles[$role_id]) ? $roles[$role_id] : 'Unknown Role';
+}
+
 // Helper function to get available tables
 function getAvailableTables($mysqli) {
     $query = "SELECT DISTINCT table_name FROM syn_logs WHERE table_name IS NOT NULL ORDER BY table_name";
@@ -142,6 +178,12 @@ try {
     // ==============================================
     $headers = getAllHeadersSimple();
     
+    // ==============================================
+    // STEP 1.5: Check for detail view request
+    // ==============================================
+    $action = isset($_GET['action']) ? $_GET['action'] : 'list';
+    $log_id = isset($_GET['id']) ? (int)$_GET['id'] : null;
+    
     $db_host = '';
     $db_user = '';
     $db_pass = '';
@@ -186,6 +228,222 @@ try {
     }
     
     $mysqli->set_charset("utf8mb4");
+    
+    // ==============================================
+    // STEP 3.5: Handle user check/lookup endpoints
+    // ==============================================
+    if ($action === 'get-user') {
+        $user_id = isset($_GET['user_id']) ? (int)$_GET['user_id'] : null;
+        $username = isset($_GET['username']) ? $_GET['username'] : null;
+        $email = isset($_GET['email']) ? $_GET['email'] : null;
+        
+        if (!$user_id && !$username && !$email) {
+            throw new Exception("At least one of user_id, username, or email must be provided", 400);
+        }
+        
+        $user_query = "SELECT id, name, email, email_verified_at, role, created_at, updated_at FROM users WHERE 1=1";
+        $user_params = [];
+        $user_param_types = "";
+        
+        if ($user_id) {
+            $user_query .= " AND id = ?";
+            $user_params[] = $user_id;
+            $user_param_types .= "i";
+        }
+        
+        if ($username) {
+            $user_query .= " AND name = ?";
+            $user_params[] = $username;
+            $user_param_types .= "s";
+        }
+        
+        if ($email) {
+            $user_query .= " AND email = ?";
+            $user_params[] = $email;
+            $user_param_types .= "s";
+        }
+        
+        $user_stmt = $mysqli->prepare($user_query);
+        if (!$user_stmt) {
+            throw new Exception("Failed to prepare user query: " . $mysqli->error, 500);
+        }
+        
+        if (!empty($user_params)) {
+            $user_stmt->bind_param($user_param_types, ...$user_params);
+        }
+        
+        $user_stmt->execute();
+        $user_result = $user_stmt->get_result();
+        $users_found = [];
+        
+        while ($row = $user_result->fetch_assoc()) {
+            $users_found[] = [
+                'id' => (int)$row['id'],
+                'name' => $row['name'],
+                'email' => $row['email'],
+                'role' => (int)$row['role'],
+                'email_verified' => !empty($row['email_verified_at']),
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'role_label' => getRoleLabel((int)$row['role'])
+            ];
+        }
+        
+        $user_stmt->close();
+        
+        if (empty($users_found)) {
+            throw new Exception("User not found with the provided criteria", 404);
+        }
+        
+        $user_response = [
+            'success' => true,
+            'message' => count($users_found) === 1 ? 'User found' : 'Multiple users found',
+            'data' => count($users_found) === 1 ? $users_found[0] : $users_found,
+            'count' => count($users_found)
+        ];
+        
+        http_response_code(200);
+        echo json_encode($user_response, JSON_PRETTY_PRINT);
+        $mysqli->close();
+        exit;
+    }
+    
+    // ==============================================
+    // STEP 3.6: Handle all users listing
+    // ==============================================
+    if ($action === 'all-users') {
+        $all_users_query = "SELECT id, name, email, role, email_verified_at, created_at, updated_at FROM users ORDER BY id ASC";
+        
+        $all_users_stmt = $mysqli->prepare($all_users_query);
+        if (!$all_users_stmt) {
+            throw new Exception("Failed to prepare all users query: " . $mysqli->error, 500);
+        }
+        
+        $all_users_stmt->execute();
+        $all_users_result = $all_users_stmt->get_result();
+        $all_users_list = [];
+        
+        while ($row = $all_users_result->fetch_assoc()) {
+            $all_users_list[] = [
+                'id' => (int)$row['id'],
+                'name' => $row['name'],
+                'email' => $row['email'],
+                'role' => (int)$row['role'],
+                'role_label' => getRoleLabel((int)$row['role']),
+                'email_verified' => !empty($row['email_verified_at']),
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at']
+            ];
+        }
+        
+        $all_users_stmt->close();
+        
+        $all_users_response = [
+            'success' => true,
+            'message' => 'All users retrieved successfully',
+            'data' => $all_users_list,
+            'total_users' => count($all_users_list),
+            'role_definitions' => [
+                0 => 'Admin',
+                1 => 'Manager',
+                2 => 'Cashier',
+                3 => 'Stock-Keeper'
+            ]
+        ];
+        
+        http_response_code(200);
+        echo json_encode($all_users_response, JSON_PRETTY_PRINT);
+        $mysqli->close();
+        exit;
+    }
+    
+    // ==============================================
+    // STEP 3.7: Handle detail view for single log
+    // ==============================================
+    if ($action === 'details' && $log_id) {
+        $detail_query = "SELECT 
+                            sl.id,
+                            sl.table_name,
+                            sl.module,
+                            sl.action,
+                            sl.synced_at,
+                            sl.user_id,
+                            sl.created_at,
+                            sl.updated_at,
+                            u.id as user_id_check,
+                            u.name as user_name,
+                            u.email as user_email,
+                            u.role as user_role,
+                            CASE 
+                                WHEN sl.synced_at IS NOT NULL THEN 'synced'
+                                ELSE 'pending'
+                            END as sync_status,
+                            CASE 
+                                WHEN sl.synced_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, sl.created_at, sl.synced_at)
+                                ELSE NULL
+                            END as sync_duration_seconds,
+                            CASE 
+                                WHEN sl.synced_at IS NOT NULL THEN DATE_FORMAT(sl.synced_at, '%Y-%m-%d %H:%i:%s')
+                                ELSE NULL
+                            END as formatted_synced_at,
+                            DATE_FORMAT(sl.created_at, '%Y-%m-%d %H:%i:%s') as formatted_created_at,
+                            DATE_FORMAT(sl.updated_at, '%Y-%m-%d %H:%i:%s') as formatted_updated_at
+                        FROM syn_logs sl
+                        LEFT JOIN users u ON sl.user_id = u.id
+                        WHERE sl.id = ?";
+        
+        $detail_stmt = $mysqli->prepare($detail_query);
+        if (!$detail_stmt) {
+            throw new Exception("Failed to prepare detail query: " . $mysqli->error, 500);
+        }
+        
+        $detail_stmt->bind_param("i", $log_id);
+        $detail_stmt->execute();
+        $detail_result = $detail_stmt->get_result();
+        $detail_row = $detail_result->fetch_assoc();
+        $detail_stmt->close();
+        
+        if (!$detail_row) {
+            throw new Exception("Synchronization log record not found with ID: " . $log_id, 404);
+        }
+        
+        $detail_response = [
+            'success' => true,
+            'message' => 'Full details of synchronization log retrieved successfully',
+            'data' => [
+                'id' => (int)$detail_row['id'],
+                'table_name' => $detail_row['table_name'],
+                'module' => $detail_row['module'],
+                'action' => $detail_row['action'],
+                'sync_status' => $detail_row['sync_status'],
+                'user' => $detail_row['user_id'] ? [
+                    'id' => (int)$detail_row['user_id'],
+                    'name' => $detail_row['user_name'],
+                    'email' => $detail_row['user_email'],
+                    'role' => (int)$detail_row['user_role']
+                ] : null,
+                'timestamps' => [
+                    'created_at' => $detail_row['created_at'],
+                    'created_at_formatted' => $detail_row['formatted_created_at'],
+                    'synced_at' => $detail_row['synced_at'],
+                    'synced_at_formatted' => $detail_row['formatted_synced_at'],
+                    'updated_at' => $detail_row['updated_at'],
+                    'updated_at_formatted' => $detail_row['formatted_updated_at']
+                ],
+                'sync_details' => [
+                    'sync_duration_seconds' => $detail_row['sync_duration_seconds'] ? (int)$detail_row['sync_duration_seconds'] : null,
+                    'sync_duration_formatted' => $detail_row['sync_duration_seconds'] ? 
+                        formatDuration($detail_row['sync_duration_seconds']) : 'Not synced yet',
+                    'is_synced' => $detail_row['sync_status'] === 'synced'
+                ]
+            ]
+        ];
+        
+        http_response_code(200);
+        echo json_encode($detail_response, JSON_PRETTY_PRINT);
+        $mysqli->close();
+        exit;
+    }
     
     // ==============================================
     // STEP 4: Get filter parameters from query string
